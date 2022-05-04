@@ -1,0 +1,296 @@
+Description: AWS CloudFormation Sample Template for a static web app. This template installs a highly-available, scalable web application deployment. It demonstrates using the AWS CloudFormation bootstrap scripts to deploy a stateless web application.
+
+Parameters:
+  #General:
+  NamingPrefix:
+    Type: String
+    Description: The naming prefix for resources created by this template.
+    Default: Prod
+
+  #Application Tier
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  ALBSGSource:
+    Description: The IP address range that can be used to access the web app
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  AutoScaleDesired:
+    Default: '3'
+    Description: The desired number of instances in auto scaling group
+    Type: Number
+    MinValue: '3'
+    MaxValue: '6'
+    ConstraintDescription: must be between 3 and 6 EC2 instances. 
+
+########################################################################
+Resources:
+  PublicALBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Enable HTTP access via port 80 and 443 to the allowed CIDR
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ALBSGSource
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Ref ALBSGSource
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref NamingPrefix
+              - Public Load Balancer
+      VpcId: !ImportValue US-EAST-1-VPC
+
+  PrivateALBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Enable internal resources to connect to internal LB on port 3000.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3000'
+          ToPort: '3000'
+          CidrIp: 10.4.0.0/16
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref NamingPrefix
+              - Private Load Balancer
+      VpcId: !ImportValue US-EAST-1-VPC
+
+#####Public Load Balancer ###################
+  PublicLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      SecurityGroups:
+        - Ref: PublicALBSecurityGroup
+      Subnets:
+        - Fn::ImportValue: DMZSubnet1
+        - Fn::ImportValue: DMZSubnet2
+
+  PublicALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PublicALBTargetGroup
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  PublicALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 15
+      #HealthCheckPort: 
+      #HealthCheckProtocol:
+      HealthCheckTimeoutSeconds: 3
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      # A short drain time helps speed up the lab
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 10
+      UnhealthyThresholdCount: 3
+      VpcId: !ImportValue US-EAST-1-VPC
+
+######### Public Facing Instance #############
+  FrontEndWebInstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Enable HTTP access via port 80 and 443 restricted to the load balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Select 
+            - 0
+            - !GetAtt 
+              - PublicLoadBalancer
+              - SecurityGroups
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          SourceSecurityGroupId: !Select 
+            - 0
+            - !GetAtt 
+              - PublicLoadBalancer
+              - SecurityGroups
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref NamingPrefix
+              - Instance
+      VpcId: !ImportValue US-EAST-1-VPC
+
+  FrontEndWebAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: DMZSubnet1
+        - Fn::ImportValue: DMZSubnet2
+      LaunchConfigurationName: !Ref FrontEndWebLaunchConfig
+      MinSize: '3'
+      MaxSize: !Ref AutoScaleDesired
+      DesiredCapacity: !Ref AutoScaleDesired
+      TargetGroupARNs:
+        - !Ref PublicALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub 'frontweb-${NamingPrefix}'
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  FrontEndWebLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: ProdSSHKey
+      SecurityGroups:
+        - !Ref FrontEndWebInstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum -y update
+          amazon-linux-extras enable nginx1
+          yum clean all
+          yum install nginx -y
+          systemctl start nginx
+
+############ Private LB ##################
+
+  PrivateLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      SecurityGroups:
+        - Ref: PrivateALBSecurityGroup
+      Subnets:
+        - Fn::ImportValue: InternalSubnet1
+        - Fn::ImportValue: InternalSubnet2
+
+  PrivateALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PrivateALBTargetGroup
+      LoadBalancerArn: !Ref PrivateLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  PrivateALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 15
+      #HealthCheckPort: 
+      #HealthCheckProtocol:
+      HealthCheckTimeoutSeconds: 3
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      # A short drain time helps speed up the lab
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 10
+      UnhealthyThresholdCount: 3
+      VpcId: !ImportValue US-EAST-1-VPC
+
+######### Instances in Internal Network #############
+
+  BackEndWebInstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Enable HTTP access via port 80 and 443 restricted to the load balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Select 
+            - 0
+            - !GetAtt 
+              - PrivateLoadBalancer
+              - SecurityGroups
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          SourceSecurityGroupId: !Select 
+            - 0
+            - !GetAtt 
+              - PrivateLoadBalancer
+              - SecurityGroups
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref NamingPrefix
+              - Instance
+      VpcId: !ImportValue US-EAST-1-VPC
+
+  BackEndWebAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: DMZSubnet1
+        - Fn::ImportValue: DMZSubnet2
+      LaunchConfigurationName: !Ref BackEndWebLaunchConfig
+      MinSize: '3'
+      MaxSize: !Ref AutoScaleDesired
+      DesiredCapacity: !Ref AutoScaleDesired
+      TargetGroupARNs:
+        - !Ref PrivateALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub 'webapp-${NamingPrefix}'
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  BackEndWebLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: ProdSSHKey
+      SecurityGroups:
+        - !Ref BackEndWebInstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum -y update
+          amazon-linux-extras enable nginx1
+          yum clean all
+          yum install nginx -y
+          systemctl start nginx

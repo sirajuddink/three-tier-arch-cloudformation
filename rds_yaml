@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Create a DB subnet group and MYSQL Database"
+
+Parameters:
+  MasterUsername:
+    Type: String
+    Description: The username for our database.
+  
+  MasterUserPassword:
+    Type: String
+    Description: The password for the database.
+    "NoEcho": true
+
+  ParameterGroup:
+    Type: String
+    Description: The name of the database parameter group created.
+
+Resources:
+    RDSSecurityGroup:
+        Type: "AWS::EC2::SecurityGroup"
+        Properties:
+            GroupDescription: "Database instances security group"
+            VpcId: !ImportValue US-EAST-1-VPC
+            SecurityGroupIngress: 
+              - 
+                CidrIp: 10.4.2.0/32
+                FromPort: 3306
+                IpProtocol: "tcp"
+                ToPort: 3306
+              -
+                CidrIp: 10.4.3.0/32
+                FromPort: 3306
+                IpProtocol: "tcp"
+                ToPort: 3306
+            SecurityGroupEgress: 
+              - 
+                CidrIp: "0.0.0.0/0"
+                IpProtocol: "-1"
+
+    RDSDBSubnetGroup:
+        Type: "AWS::RDS::DBSubnetGroup"
+        Properties:
+            DBSubnetGroupDescription: "Subnet Group for mySQL database"
+            DBSubnetGroupName: "database-subnet-group"
+            SubnetIds: 
+              - Fn::ImportValue: InternalSubnet1
+              - Fn::ImportValue: InternalSubnet2
+            Tags: 
+              - Key: Name
+                Value: AppDB
+
+    RDSDBInstance:
+        Type: AWS::RDS::DBInstance
+        Properties:
+            DBInstanceIdentifier: appdb
+            AllocatedStorage: 100
+            DBInstanceClass: db.m5.large
+            Engine: "MYSQL"
+            MasterUsername: !Ref MasterUsername
+            MasterUserPassword: !Ref MasterUserPassword
+            BackupRetentionPeriod: 7
+            MultiAZ: true
+            EngineVersion: 8.0.20
+            AutoMinorVersionUpgrade: true
+            Iops: 1000
+            PubliclyAccessible: false
+            StorageType: io1
+            Port: 3306
+            StorageEncrypted: true
+            CopyTagsToSnapshot: true
+            #MonitoringInterval: 60
+            EnableIAMDatabaseAuthentication: false
+            EnablePerformanceInsights: true
+            PerformanceInsightsRetentionPeriod: 7
+            DeletionProtection: true
+            DBSubnetGroupName: !Ref RDSDBSubnetGroup
+            VPCSecurityGroups: 
+              - !Ref RDSSecurityGroup
+            MaxAllocatedStorage: 1000
+            DBParameterGroupName: !Ref ParameterGroup
+            #MonitoringRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/rds-monitoring-role"
+            Tags: 
+              - Key: Name
+                Value: appdb
+
+Outputs:
+   Cluster:
+    Description: The DB Cluster Name
+    Value: !Ref RDSDBInstance
+    
+   SubnetGroup:
+    Description: The db subnet group name 
+    Value: !Ref RDSDBSubnetGroup

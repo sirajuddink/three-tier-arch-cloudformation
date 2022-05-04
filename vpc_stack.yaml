@@ -1,0 +1,487 @@
+Description: This template deploys a VPC, with a pair of internal and dmz subnets spread
+  across two Availability Zones. It deploys an Internet Gateway, with a default
+  route on the dmz subnets. It deploys a pair of NAT Gateways (one in each AZ),
+  and default routes for them in the private subnets.VPC name must be vpc-us-east-1.
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+    Default: us-east-1
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.4.0.0/16
+
+  DMZSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the dmz subnet in the first Availability Zone
+    Type: String
+    Default: 10.4.0.0/24
+
+  DMZSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the dmz subnet in the second Availability Zone
+    Type: String
+    Default: 10.4.1.0/24
+
+  InternalSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the customer subnet in the first Availability Zone
+    Type: String
+    Default: 10.4.2.0/24
+
+  InternalSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the customer subnet in the second Availability Zone
+    Type: String
+    Default: 10.4.3.0/24
+
+  DBSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the customer subnet in the first Availability Zone
+    Type: String
+    Default: 10.4.4.0/24
+
+  DBSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the customer subnet in the second Availability Zone
+    Type: String
+    Default: 10.4.5.0/24
+
+  VPCLogGroup:
+    Description: log group for VPC flow logs
+    Type: String
+    Default: VPCFlowLogsGroup
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  DMZSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref DMZSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub DMZ-Subnet-AZ1
+
+  DMZSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref DMZSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub DMZ-Subnet-AZ2
+
+  InternalSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref InternalSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub Internal-Subnet-AZ1
+
+  InternalSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref InternalSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub Internal-Subnet-AZ2
+
+  DBSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref DBSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub DB-Subnet-AZ1
+
+  DBSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref DBSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub DB-Subnet-AZ2
+
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} DMZ Routes
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  DMZSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref DMZSubnet1
+
+  DMZSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref DMZSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  EIP1:
+   DependsOn: InternetGatewayAttachment
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+  EIP2:
+   DependsOn: InternetGatewayAttachment
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+
+  NATGW1:
+   Type: AWS::EC2::NatGateway
+   Properties:
+      AllocationId:
+         Fn::GetAtt:
+         - EIP1
+         - AllocationId
+      SubnetId:
+         Ref: InternalSubnet1
+      Tags:
+      - Key: Name
+        Value: !Ref EnvironmentName
+  
+  NATGW2:
+   Type: AWS::EC2::NatGateway
+   Properties:
+      AllocationId:
+         Fn::GetAtt:
+         - EIP2
+         - AllocationId
+      SubnetId:
+         Ref: InternalSubnet2
+      Tags:
+      - Key: Name
+        Value: !Ref EnvironmentName
+
+  NATRoute1:
+   Type: AWS::EC2::Route
+   Properties:
+      RouteTableId:
+         Ref: PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+         Ref: NATGW1
+  NATRoute2:
+   Type: AWS::EC2::Route
+   Properties:
+      RouteTableId:
+         Ref: PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+         Ref: NATGW2
+
+  InternalSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref InternalSubnet1
+
+  InternalSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref InternalSubnet2
+
+  DBRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} DB Routes (AZ1)
+
+  DBSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DBRouteTable
+      SubnetId: !Ref DBSubnet1
+  
+  DBSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DBRouteTable
+      SubnetId: !Ref DBSubnet2
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref VPC
+  
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - CidrIp: 49.36.99.227/32
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      Tags:
+        - Key: Name
+          Value: SSHSecurityGroup
+
+  InternalSSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - CidrIp: 10.4.0.0/16
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      Tags:
+        - Key: Name
+          Value: InternalSSHSecurityGroup
+
+  HTTPSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Web Traffic to Instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        FromPort: "-1"
+        ToPort: "-1"
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: HTTPSecurityGroup
+        
+  VPCFlowLogsRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: "vpc-flow-logs"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogGroups"
+                  - "logs:DescribeLogStreams"
+                Resource: "*"
+      RoleName: VPCFlowLogs
+
+  VPCLogFlowGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref VPCLogGroup
+      RetentionInDays: 60
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    DependsOn: VPCLogFlowGroup
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt "VPCFlowLogsRole.Arn"
+      LogGroupName: !Ref VPCLogGroup
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+
+  S3Endpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:*"
+            Resource:
+              - "*"
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref VPC
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+    Export:
+      Name: "US-EAST-1-VPC"
+
+  DMZSubnets:
+    Description: A list of the DMZ Subnets
+    Value: !Join [",", [!Ref DMZSubnet1, !Ref DMZSubnet2]]
+
+  PrivateSubnets:
+    Description: A list of the private subnets
+    Value: !Join [",", [!Ref InternalSubnet1, !Ref InternalSubnet2]]
+
+  DMZSubnet1:
+    Description: A reference to the DMZ Subnet in the 1st Availability Zone
+    Value: !Ref DMZSubnet1
+    Export:
+      Name: "DMZSubnet1"
+
+  DMZSubnet2:
+    Description: A reference to the DMZ Subnet in the 2nd Availability Zone
+    Value: !Ref DMZSubnet2
+    Export:
+      Name: "DMZSubnet2"
+
+  InternalSubnet1:
+    Description: A reference to the customer subnet in the 1st Availability Zone
+    Value: !Ref InternalSubnet1
+    Export:
+      Name: "InternalSubnet1"
+
+  InternalSubnet2:
+    Description: A reference to the customer subnet in the 2nd Availability Zone
+    Value: !Ref InternalSubnet2
+    Export:
+      Name: "InternalSubnet2"
+  
+  DBSubnet1:
+    Description: A reference to the customer subnet in the 1st Availability Zone
+    Value: !Ref DBSubnet1
+    Export:
+      Name: "DBSubnet1"
+
+  DBSubnet2:
+    Description: A reference to the customer subnet in the 2nd Availability Zone
+    Value: !Ref DBSubnet2
+    Export:
+      Name: "DBSubnet2"
+
+  NoIngressSecurityGroup:
+    Description: Security group with no ingress rule
+    Value: !Ref NoIngressSecurityGroup
+
+  PublicRouteTableExport:
+    Description: A reference to the route table used for the DMZ.
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: "PublicRouteTable"
+
+  PrivateRouteTableExport1:
+    Description: Private route table 1
+    Value: !Ref PrivateRouteTable1
+    Export:
+      Name: "PrivateRouteTable1"
+
+  PrivateRouteTableExport2:
+    Description: Private route table 2
+    Value: !Ref PrivateRouteTable2
+    Export:
+      Name: "PrivateRouteTable2"
+  
+  DBRouteTableExport:
+    Description: DB route table
+    Value: !Ref DBRouteTable
+    Export:
+      Name: "DBRouteTable"
+  
+  SSHSecurityGroupID:
+    Description: Id for the SSH Security Group
+    Value: !Ref SSHSecurityGroup
+    Export:
+      Name: "SSHSecurityGroup"
+    
+  HTTPSecurityGroupID:
+    Value: !Ref HTTPSecurityGroup
+    Description: Id for the SSH Security Group
+    Export:
+      Name: "HTTPSecurityGroup"
+
+  InternalSSHSecurityGroupID:
+    Value: !Ref InternalSSHSecurityGroup
+    Description: Id for the SSH Security Group
+    Export:
+      Name: "InternalSSHSecurityGroupID"
