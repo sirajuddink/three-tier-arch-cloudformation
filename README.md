@@ -13,3 +13,5 @@ Note: This CF will only deploy a infra, to deploy a application like Java or Nod
 
 This CF will only create a RDS instance but to create table and insert the Data in it Lambda can be utilized to be trigger using SSM Document in combination with SSM State Manager once the RDS is launched.
 
+This CF can also be automated through the Jenkins or CodePipeline so that no user interference is require. 
+
