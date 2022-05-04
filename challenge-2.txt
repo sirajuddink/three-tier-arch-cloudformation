@@ -1,0 +1,33 @@
+Metadata can be retrieved using http://169.254.169.254/latest/meta-data/ and output can be narrowed down using bash commands like pipe grep or by giving conditions. If you want to get the instance IP address. it can be done using this command "curl http://169.254.169.254/latest/meta-data/local-ipv4" basically we can get this data during instance is being launched using userdata and put it in host file if required or in application configuration through variable.
+
+If you want to retrieve the data in Json format you use the below command:
+
+wget -q -O - http://169.254.169.254/latest/dynamic/instance-identity/document >> Output of this command will be in Json format and to get the specific data you will need to install the 'jq' command to narrow down the command output.
+
+Example Output:
+[ec2-user@ip-10-4-0-6 ~]$ wget -q -O - http://169.254.169.254/latest/dynamic/instance-identity/document
+{
+  "accountId" : "344154303541",
+  "architecture" : "x86_64",
+  "availabilityZone" : "us-east-1a",
+  "billingProducts" : null,
+  "devpayProductCodes" : null,
+  "marketplaceProductCodes" : null,
+  "imageId" : "ami-06eecef118bbf9259",
+  "instanceId" : "i-098de24b34f39003c",
+  "instanceType" : "t3.micro",
+  "kernelId" : null,
+  "pendingTime" : "2022-05-04T07:01:02Z",
+  "privateIp" : "10.4.0.6",
+  "ramdiskId" : null,
+  "region" : "us-east-1",
+  "version" : "2017-09-30"
+}
+
+From the above output if you want to retrieve only intance id for example run the below command:
+
+wget -q -O - http://169.254.169.254/latest/dynamic/instance-identity/document |  jq '.instanceId' 
+
+Example Output:
+[ec2-user@ip-10-4-0-6 ~]$ wget -q -O - http://169.254.169.254/latest/dynamic/instance-identity/document |  jq '.instanceId' | sed -e 's/^"//' -e 's/"$//'
+"i-098de24b34f39003c"
