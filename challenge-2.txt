@@ -1,3 +1,17 @@
+Challenge #2 Question - 
+
+Summary:
+We need to write code that will query the meta data of an instance within aws and provide a json formatted output. The choice of language and implementation is up to you.
+Bonus Points
+
+The code allows for a particular data key to be retrieved individually
+
+Hints
+•       Aws Documentation
+•       Azure Documentation
+•       Google Documentation
+
+
 Metadata can be retrieved using http://169.254.169.254/latest/meta-data/ and output can be narrowed down using bash commands like pipe grep or by giving conditions. If you want to get the instance IP address. it can be done using this command "curl http://169.254.169.254/latest/meta-data/local-ipv4" basically we can get this data during instance is being launched using userdata and put it in host file if required or in application configuration through variable.
 
 If you want to retrieve the data in Json format you use the below command:
